@@ -5,6 +5,7 @@ layout: default
 # Welcome
 
 Hello and welcome to the Project Dialogue website. 
+
 This is the official release page of the dynamic, interactive, minecraft dialogue generator: Project Dialogue.
 
 # Tutorials
@@ -26,4 +27,5 @@ On the [GitHub](https://github.com/Superkebabbie/projectDIALOGUE) page you can d
 
 # Contact
 You can reach us at support@ProjectDIALOGUE.com
+
 We also have a youtube channel [here](https://www.youtube.com/channel/UCzQBwCtRHjYcLKBMd0ADXUg) where we play some games!
