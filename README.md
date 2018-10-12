@@ -6,7 +6,7 @@ Dialogue in most adventures is limited to _monologue_, but project: DIALOGUE exi
 
 The project started as a filter for [MCEdit](https://www.mcedit-unified.net/), but as MC 1.13 came around datapacks proved to be just as effective without requiring command blocks in loaded chunks (the MCEdit version can still be found as a legacy release on the [downloads page](https://github.com/Superkebabbie/projectDIALOGUE/releases)). 
 
-Project: DIALOGUE uses XML files to define the trees, using a syntax developed purely for this purpose. These files can be loaded into your Minecraft worlds using the application (or MCEdit filter) and ultimately produces dialogues that you can activate using one central variable. This dialogue consists out of a automatically timed sequence of tellraw messages, commands and choice points, as defined by the XML file. A detailed explanation of the entire process can be found on [`this page`](https://github.com/Superkebabbie/projectDIALOGUE/wiki/The-Basics) of the wiki.
+Project: DIALOGUE uses XML files to define the trees, using a syntax developed purely for this purpose. These files can be loaded into your Minecraft worlds using the application (or MCEdit filter) and ultimately produces dialogues that you can activate using one central variable. This dialogue consists out of a automatically timed sequence of tellraw messages, commands and choice points, as defined by the XML file. A detailed explanation of the entire process can be found on [this page](https://github.com/Superkebabbie/projectDIALOGUE/wiki/The-Basics) of the wiki.
 
 `WIP Tutorial Video`
 
