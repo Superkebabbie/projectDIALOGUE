@@ -11,9 +11,9 @@ Project: DIALOGUE uses XML files to define the trees, using a syntax developed p
 `WIP Tutorial Video`
 
 ## Links
-* [wiki](https://github.com/Superkebabbie/projectDIALOGUE/wiki): detailed documentation of the dialogue syntax and guides on getting started and troubleshooting.
-* [releases](https://github.com/Superkebabbie/projectDIALOGUE/releases): download links!
-* [youTube](https://www.youtube.com/channel/UCzQBwCtRHjYcLKBMd0ADXUg): developer YouTube channel where we play some games if you want to get to know us. Tutorial videos will also be placed here.
+* [Wiki](https://github.com/Superkebabbie/projectDIALOGUE/wiki): detailed documentation of the dialogue syntax and guides on getting started and troubleshooting.
+* [Releases](https://github.com/Superkebabbie/projectDIALOGUE/releases): download links!
+* [YouTube](https://www.youtube.com/channel/UCzQBwCtRHjYcLKBMd0ADXUg): developer YouTube channel where we play some games if you want to get to know us. Tutorial videos will also be placed here.
 * [Twitch](https://www.twitch.tv/conglomerationbroadcast): Our twitch channel where we occassionally stream. Feel free to hop in with questions if you have them!
 
 ## Goals for future versions
