@@ -8,8 +8,6 @@ The project started as a filter for [MCEdit](https://www.mcedit-unified.net/), b
 
 Project: DIALOGUE uses XML files to define the trees, using a syntax developed purely for this purpose. These files can be loaded into your Minecraft worlds using the application (or MCEdit filter) and ultimately produces dialogues that you can activate using one central variable. This dialogue consists out of a automatically timed sequence of tellraw messages, commands and choice points, as defined by the XML file. A detailed explanation of the entire process can be found on [this page](https://github.com/Superkebabbie/projectDIALOGUE/wiki/The-Basics) of the wiki.
 
-`WIP Tutorial Video`
-
 ## Links
 * [Wiki](https://github.com/Superkebabbie/projectDIALOGUE/wiki): detailed documentation of the dialogue syntax and guides on getting started and troubleshooting.
 * [Releases](https://github.com/Superkebabbie/projectDIALOGUE/releases): download links!
