@@ -1,24 +1,42 @@
 # -*- coding: utf-8 -*-
 # author: Superkebabbie
-# version: 1.2 (wrapping up)
+# version: 1.3 (packed and shipped)
+# now independent of MCEdit and chunk loading
 
-displayName = "Project DIALOGUE"
-
-import sys, os
-support_dir = os.path.realpath(os.path.abspath(os.path.join('stock-filters','projectDialogue')))
-if os.path.exists(support_dir):
-    sys.path.insert(0, support_dir)#enforces loading of support code rather than default ETree installations
-else:
-    raise Exception("Could not find support files! Make sure the projectDIALOGUE folder is in the 'stock-filters' folder of MCEdit!")
-    
-from math import floor
-import random
-from pymclevel import TAG_List, TAG_Byte, TAG_Int, TAG_Compound, TAG_Short, TAG_Double, TAG_String, TAG_Float, TAG_Long
-from numpy import zeros
-import mcplatform, albow
-import ElementTree as xTree
+import sys, os, shutil
 import re
 
+import tkinter as tk
+from tkinter import filedialog, messagebox
+
+sys.modules['_elementtree'] = None
+import xml.etree.ElementTree as xTree
+#workaround enabling line numbers to be added to the eTree
+#courtesy of Duncan Harris
+class LineNumberingParser(xTree.XMLParser):
+    def _start(self, *args, **kwargs):
+        # Here we assume the default XML parser which is expat
+        # and copy its element position attributes into output Elements
+        element = super(self.__class__, self)._start(*args, **kwargs)
+        element.sourceline = self.parser.CurrentLineNumber
+        element.sourcecol = self.parser.CurrentColumnNumber
+        return element
+
+    def _end(self, *args, **kwargs):
+        element = super(self.__class__, self)._end(*args, **kwargs)
+        element.sourcelineend = self.parser.CurrentLineNumber
+        element.sourcecolend = self.parser.CurrentColumnNumber
+        return element
+        
+class SimpleTerminationException(Exception):
+    def __init__(self, reason, exception=None):
+        self.reason = reason
+        
+    def __str__(self):
+        return 'APPLICATION TERMINATED: ' + self.reason
+
+# -------------------- STYLE ---------------------#
+        
 class Style:    
     def __init__(self,str):
         #l=bold,o=italic,n=underline,m=strikethrough,k=obfuscated
@@ -50,11 +68,10 @@ def handleText(element,vars):
     vars = doConvergence(vars)
     lines = [s for s in [l.lstrip('\t ') for l in element.text.split('\n')] if s != '']#string formatting: cut newlines and tabs and remove empty lines
     for l in lines:
-        (x,y,z) = getNextWorkCoord()
         try:
-            makeCommandBlock(x,y,z,getCommandBlockOrientation(),toMessage(l,vars),'chain',False,False,False)
+            write(toMessage(l,vars,header='TEXT: %s'%l.upper()))
         except UnknownFormattingCodeError as e:
-            albow.dialogs.alert("Warning: %s in 't' at line %d"%(str(e),element.sourceline))
+            raise UnknownFormattingCodeError("%s in 't' at line %d"%(str(e),element.sourceline))
         vars['tick'] += vars['delay']
     goDeeper(element,vars,[])#checks if leaf does not have children
     vars = makeEnd(vars)
@@ -66,8 +83,7 @@ def handleCommand(element,vars):
     vars = doConvergence(vars)
     lines = [s for s in [l.lstrip('\t ') for l in element.text.split('\n')] if s != '']#string formatting: cut newlines and tabs and remove empty lines
     for l in lines:
-        (x,y,z) = getNextWorkCoord()
-        makeCommandBlock(x,y,z,getCommandBlockOrientation(),toCommand(vars['tick'],vars['seg'],l),'chain',False,False,False)
+        write(toCommand(vars['tick'],vars['seg'],l.lstrip('/'),header='COMMAND: %s'%l.upper()))
         vars['tick'] += vars['delay']
     goDeeper(element,vars,[])#checks if leaf does not have children
     vars = makeEnd(vars)
@@ -91,7 +107,7 @@ def handleConcatText(element,vars):
         try:
             vars['compounds'].extend(constructCompounds(l,vars))
         except UnknownFormattingCodeError as e:
-            albow.dialogs.alert("Warning: %s in 't' at line %d"%(str(e),element.sourceline))
+            raise UnknownFormattingCodeError("%s in 't' at line %d"%(str(e),element.sourceline))
     goDeeper(element,vars,[])#checks if leaf does not have children
     return vars
     
@@ -109,8 +125,7 @@ def handleConcat(element,vars):
         start = 1 if vars['name'] == '' else 2#no sep between name and first compound
         for idx in reversed(range(start,len(vars['compounds']))):
             vars['compounds'].insert(idx,TextCompound(vars['sep'],vars['textcol'],vars['style']))
-    (x,y,z) = getNextWorkCoord()
-    makeCommandBlock(x,y,z,getCommandBlockOrientation(),toCommand(vars['tick'],vars['seg'],'tellraw @a '+toTellraw(vars['compounds'])),'chain',False,False,False)
+    write(toCommand(vars['tick'],vars['seg'],'tellraw @a '+toTellraw(vars['compounds']),header='TEXT (COMP.): %s'%''.join([str(c).upper() for c in vars['compounds']])))
     getHandleFunction['t'] = handleText #reset handle function
     vars['tick'] += vars['delay']
     vars = makeEnd(vars)
@@ -134,8 +149,7 @@ def handleOption(element,vars):
         style = getOptionAttribute(vars['opstyle'],vars['maxSeg']-vars['seg'],vars['style'])
     if 't' not in element.attrib:
         raise xTree.ParseError("Missing required attribute 't' in option at line %d"%element.sourceline)
-    (x,y,z) = getNextWorkCoord()
-    makeCommandBlock(x,y,z,getCommandBlockOrientation(),toOption(element.attrib['t'],col,style,vars),'chain',False,False,False)
+    write(toOption(element.attrib['t'],col,style,vars,header='OPTION: %s'%element.attrib['t'].upper()))
     vars['trans'].append(toTransition(vars['seg'],vars['maxSeg']))
     vars['tick'] = 0
     segMem = vars['seg']
@@ -167,16 +181,11 @@ def handleDialogue(element,vars):
     if vars['num'] == 0:
         vars['num'] = maxDiaNum+1
     maxDiaNum = max(vars['num'],maxDiaNum)
-    newDialogue(vars['num'])
-    print('Assigning number ' + str(vars['num']) + ' to dialogue \'' + vars['name'] + '\' at line ' + str(element.sourceline))
+    newDialogue(vars['num'],vars['name'],element.sourceline)
     vars = goDeeper(element,vars)
     for command in vars['trans']:#append the transition block
-        (x,y,z) = getNextWorkCoord()
-        makeCommandBlock(x,y,z,getCommandBlockOrientation(),command,'chain',False,False,False)
-    (x,y,z) = getNextWorkCoord()
-    makeCommandBlock(x,y,z,getCommandBlockOrientation(),'scoreboard players set @a[score_dSeg_min=1] dSeg 0','chain',False,False,False)
-    (x,y,z) = getNextWorkCoord()
-    makeCommandBlock(x,y,z,getCommandBlockOrientation(),toCommand(vars['tick'],vars['maxSeg'],'scoreboard players set @e[tag=tracker] dNum 0'),'chain',False,False,False)
+        write(command)
+    write(toCommand(vars['tick'],vars['maxSeg'],'scoreboard players set dNum PD 0',header='#DIALOGUE END'))
     return vars   
 
 def handleTree(element):
@@ -190,7 +199,7 @@ def handleTree(element):
         'delay'  : 40,          #standard delay between two messages in ticks
         'seg'    : 0,           #segment number in the current dialogue
         'maxSeg' : 0,           #tracker of the highest segment number that has been used in the tree. New segments are made with number maxSeg+1
-        'textcol' : 'white', #colour of the spoken text
+        'textcol' : 'white',    #colour of the spoken text
         'opcols' : [None],      #colours of the options, a list that is looped
         'opstyle': [Style('')], #styles of the options, also looped list
         'style'  : Style(''),   #text style following MC formatting options, see Style class for more
@@ -308,7 +317,7 @@ def readAttributes(element,vars,acceptedAtts,ignore=[]):
         elif v not in ignore:
             ignored.append(v)
     if ignored != []:
-        albow.dialogs.alert("Warning: ignored attribute%s %s in %s at line %d.\n\n(Must be one of %s)"%
+        raise xTree.ParseError("Warning: ignored attribute%s %s in %s at line %d.\n\n(Must be one of %s)"%
                 ('s' if len(ignored) > 1 else '',
                 ', '.join(["'"+s+"'" for s in ignored]),
                 element.tag,
@@ -329,18 +338,16 @@ def doConvergence(vars):
     #for all ends in the ends list, make a command block that syncs that end up with the current segment, then empty the list
     #any leaf node is both a potential end and a point where convergence is necessary
     converged = False
+    toremove = []
     for endSeg in vars['ends'].keys():
         if vars['seg'] < endSeg:
             #there are open ends
             converged = True
             endTick = vars['ends'][endSeg]
-            vars['trans'].append('scoreboard players set @e[tag=tracker,score_dTim_min=%d,score_dTim=%d,score_dOldSeg_min=%d,score_dOldSeg=%d] dSeg %d'%
-                    (endTick,
-                     endTick,
-                     endSeg,
-                     endSeg,
-                     vars['maxSeg']+1))
-            del vars['ends'][endSeg]
+            vars['trans'].append(toCommand(endTick,endSeg,'scoreboard players set dNewSeg PD %d'%(vars['maxSeg']+1),header='CONVERGENCE %d ==> %d'%(endSeg,vars['maxSeg']+1)))
+            toremove.append(endSeg)
+    for endSeg in toremove:
+        del vars['ends'][endSeg]
     if converged:
         vars['maxSeg'] += 1
         vars['seg'] = vars['maxSeg']
@@ -351,23 +358,29 @@ def makeEnd(vars):
     #make a new end for this segment
     vars['ends'][vars['seg']] = vars['tick']
     return vars
-            
-def getTree(filename):
-    root = xTree.parse(filename).getroot()
-    return root
     
 # ------------- COMMANDS -------------#
 
-def toCommand(time,seg,command):
-    return 'execute @e[tag=tracker,score_dTim_min=%d,score_dTim=%d,score_dSeg_min=%d,score_dSeg=%d] ~ ~ ~ %s'%(time,time,seg,seg,command)
+def toCommand(time,seg,command,header=''):
+    if header != '':
+        header = '#%s\n'%header
+    return  '%s'%header +\
+            'scoreboard players remove dTim PD %d\n'%time +\
+            'scoreboard players remove dSeg PD %d\n'%seg +\
+            'execute if score dSeg PD = zero PD run execute if score dTim PD = zero PD run %s\n'%command +\
+            'scoreboard players operation dSeg PD = dOldSeg PD\n' +\
+            'scoreboard players operation dTim PD = dOldTim PD\n\n'
 
 def toTransition(segFrom,segTo):
-    return 'scoreboard players operation @e[tag=tracker,score_dOldSeg_min=%d,score_dOldSeg=%d] dSeg = @a[score_dSeg_min=%d,score_dSeg=%d] dSeg'%(segFrom,segFrom,segTo,segTo)
+    return  '#TRANSITION %d ==> %d\n'%(segFrom,segTo) +\
+            'scoreboard players remove dSeg PD %d\n'%segFrom +\
+            'execute if score dSeg PD = zero PD run scoreboard players operation dNewSeg PD = @a[scores={dSeg=%d}] dSeg\n'%(segTo) +\
+            'scoreboard players operation dSeg PD = dOldSeg PD\n\n'
 
-def toMessage(text,vars):
+def toMessage(text,vars,header=''):
     #construct the basic (non-interactable) tellraw message for a command block
     compounds = constructCompounds(text,vars)
-    return toCommand(vars['tick'],vars['seg'],'tellraw @a ' + toTellraw(compounds))
+    return toCommand(vars['tick'],vars['seg'],'tellraw @a ' + toTellraw(compounds),header)
     
 def constructCompounds(text,vars):
     compounds = []
@@ -406,8 +419,8 @@ def constructOptionCompounds(text,workcol,style,clickevent):
             for ss in splitOnSelectors:
                 if ss.startswith('@'):
                     #this is a selector
-                    compounds.append(TextCompound(ss,workcol,workstyle,extra=clickevent))
                     #TODO (LATER VERSION): If Mojang fixes issue MC-55493, use line below to enable selectors in option (that have a working clickEvent).
+                    compounds.append(TextCompound(ss,workcol,workstyle,extra=clickevent))
                     #compounds.append(SelectorCompound(ss,workcol,workstyle,extra=clickevent))
                 else:
                     compounds.append(TextCompound(ss,workcol,workstyle,extra=clickevent))
@@ -443,7 +456,7 @@ def handleFormattingCode(mode,workcol,workstyle,defcol,defstyle):
     elif mode == 'r':
         workcol = defcol
         workstyle = defstyle.copy()
-    else: raise UnknownFormattingCodeError("encountered unknown formatting code %s"%mode)
+    else: raise UnknownFormattingCodeError("Encountered unknown formatting code %s"%mode)
     return workcol,workstyle
         
              
@@ -462,6 +475,9 @@ class TextCompound():
             self.style.toTellrawProperties(),
             self.extra)
             
+    def __str__(self):
+        return self.text
+            
 class SelectorCompound():
     #JSON compound that consists of a selector
     def __init__(self,selector,colour,style,extra=''):
@@ -476,204 +492,159 @@ class SelectorCompound():
             ',"color":"%s"'%(self.colour),
             self.style.toTellrawProperties(),
             self.extra)
+            
+    def __str__(self):
+        return self.selector
              
 def toTellraw(compounds):
     #take a list of JSON compounds and produce the entire tellraw JSON argument
     return '[%s]'%','.join([c.encode() for c in compounds])        
     
-def toOption(text,colour,style,vars):
+def toOption(text,colour,style,vars,header=''):
     #This command needs the dialogue number and old segment to make sure the options are only clickable at one moment
     compounds = constructOptionCompounds(text,colour,style,',"clickEvent":{"action":"run_command","value":"/trigger dSeg set %d"}'%vars['maxSeg'])
-    return toCommand(vars['tick'],vars['seg'],'tellraw @a ' + toTellraw(compounds))
+    return toCommand(vars['tick'],vars['seg'],'tellraw @a ' + toTellraw(compounds),header)
 
-#--------------- WORLD ---------------#
+#--------------- WRITING ---------------#
 
-directionNum = {
-'north': 2,
-'south': 3,
-'west' : 4,
-'east' : 5,
-'up'   : 1,
-'down' : 0
-}
+def write(lines):
+    dialogueFile.write(lines)
 
-def getNextWorkCoord():
-    #update workX, -Y and -Z to point to the next coordinate according to the build plan
-    global minX,minY,minZ,workX,workY,workZ,maxX,maxY,maxZ,xDirection,yDirection
-    if (not compactMode) and (workZ-(minZ-1))%3 == 0:
-        #not compact mode, every 3 slices skip one
-        if workZ == maxZ: albow.dialogs.alert('Not enough space provided! Exceeding limits in the positive Z direction (south).')
-        workZ += 1
-        return (workX,workY,workZ)
-    if (xDirection == 1 and workX == maxX) or (xDirection == -1 and workX == minX):
-        xDirection *= -1#flip the direction
-        if (yDirection == 1 and workY == maxY) or (yDirection == -1 and workY == minY):
-            #filled a whole slice, go to the next one (on z axis)
-            yDirection *= -1
-            if workZ == maxZ: albow.dialogs.alert('Not enough space provided! Exceeding limits in the positive Z direction (south).')
-            workZ += 1
-        else:
-            workY += yDirection
+def newDialogue(diaNum,name,line):
+    #Starts a new dialogue file
+    global dialogueFile, diaNums
+    if 'dialogueFile' in globals():#text whether variable is initiated
+        dialogueFile.close()
+    dialogueFile = open(os.path.join(targetpath,'data/projectdialogue/functions','dialogue%d.mcfunction'%(diaNum)),'w')
+    write("#DIALOGUE NUMBER: %d\n#DIALOGUE NAME:   %s\n#SOURCE LINE:     %d\n\n"%(diaNum,name,line))
+    # print('Assigning number %d to dialogue \'%s\' at line %d'%(diaNum,name,line))
+    if diaNum in diaNums:
+        raise SimpleTerminationException("Number %d used for multiple dialogues! A dialogue number must be unique!"%diaNum)
     else:
-        workX += xDirection
-    return (workX,workY,workZ)
+        diaNums[diaNum] = name
+    # print("Current Dialogue: %s"%os.path.join(targetpath,'data/projectdialogue/functions','dialogue%d.mcfunction'%(diaNum)))
     
-def getCommandBlockOrientation():
-    if (not compactMode) and (workZ-(minZ-1))%3 == 0:
-        return 'south'
-    if (xDirection == 1 and workX == maxX) or (xDirection == -1 and workX == minX):
-        if (yDirection == 1 and workY == maxY) or (yDirection == -1 and workY == minY):
-            #go to new slice, point to positive Z
-                return 'south'
-        else:
-            if yDirection == 1:
-                return 'up' 
-            else: 
-                return 'down'
-    else:
-        if xDirection == 1: 
-            return 'east' 
-        else: 
-            return 'west'
-            
-def newDialogue(diaNum):
-    #Starts a new chain of command blocks, used at a new dialogue
-    global minX,minZ,workX,workY,workZ,xDirection,yDirection,compactMode
-    if not compactMode:
-        workX = minX
-        workY = minY
-        if workZ == maxZ-1 or workZ == maxZ: albow.dialogs.alert('Not enough space provided! Exceeding limits in the positive Z direction (south).')
-        workZ += 2#leave a gap of 1 between the chains
-        xDirection = 1
-        yDirection = 1
-        minZ = workZ#Update minZ to compute where the maintenance gaps in non-compact mode should go
-    else:
-        getNextWorkCoord()
-    makeCommandBlock(workX,workY,workZ,getCommandBlockOrientation(),"/execute @e[tag=tracker,score_dNum_min=%d,score_dNum=%d] ~ ~ ~ /particle cloud ~ ~1 ~ 0 1 0 0.1"%(diaNum,diaNum),'repeating',False,False,False)
-    getNextWorkCoord()
-    makeCommandBlock(workX,workY,workZ,getCommandBlockOrientation(),'','repeating',False,True,False)
-
-def inChunk(x,y,z):
-    #return the chunk coordinates in which the coordinates belong
-    return (int(floor(x/16)),int(floor(y/16)),int(floor(z/16)))
+def initDirectories(): 
+    #create directories and place the unchanging files there
+    if os.path.exists(targetpath): 
+        try:
+            shutil.rmtree(targetpath) #remove old instance of the file structure #TODO query user for target dir?
+        except OSError:
+            raise SimpleTerminationException('Can\'t remove old instance of PD files. If you have any files/directories opened, close them and try again')
+    os.makedirs(os.path.join(targetpath,'data/minecraft/tags/functions'),exist_ok=True)
+    os.makedirs(os.path.join(targetpath,'data/projectdialogue/functions'),exist_ok=True)
+    #create constant files
+    with open(os.path.join(targetpath,'pack.mcmeta'),'w') as f:
+        f.write('{\n\t"pack": {\n\t\t"pack_format": 1,\n\t\t"description": "Project: DIALOGUE"\n\t}\n}')
+    with open(os.path.join(targetpath,'data/minecraft/tags/functions/load.json'),'w') as f:
+        f.write('{\n\t"values": [\n\t\t"projectdialogue:pdload"\n\t]\n}')
+    with open(os.path.join(targetpath,'data/minecraft/tags/functions/tick.json'),'w') as f:
+        f.write('{\n\t"values": [\n\t\t"projectdialogue:pdtick"\n\t]\n}')
+    with open(os.path.join(targetpath,'data/projectdialogue/functions/pdload.mcfunction'),'w') as f:
+        f.write('scoreboard objectives add PD dummy "PD"\n' +\
+                'scoreboard players set zero PD 0\n' +\
+                'scoreboard objectives add dSeg trigger "dSeg"\n' +\
+                'gamerule sendCommandFeedback false') 
+                #debug features
+                # 'scoreboard objectives setdisplay sidebar PD\n' +\
+                # 'scoreboard objectives setdisplay list dSeg\n' +\
     
-def ranUUID():
-    #generate random numbers within the UUID range, use to give unique UUID to things and prevent conflicts!
-    return random.randrange(-9999999999999999,9999999999999999)
+def constructTickFile(diaNums):
+    with open(os.path.join(targetpath,'data/projectdialogue/functions/pdtick.mcfunction'),'w') as f:
+        #tick operations: 1) increment timer, 2) check if number has changed, if so reset timer and segment, 3) check if newSeg was assigned, if so reset timer and update seg, 4) update all memory variables
+        f.write('scoreboard players add dTim PD 1\n' +\
+                'execute unless score dNum PD = dOldNum PD run scoreboard players set dTim PD -1\n' +\
+                'execute unless score dNum PD = dOldNum PD run scoreboard players set dSeg PD 0\n' +\
+                'execute unless score dNum PD = dOldNum PD run scoreboard players set @a dSeg 0\n' +\
+                'execute unless score dNewSeg PD = zero PD run scoreboard players set dTim PD -1\n' +\
+                'execute unless score dNewSeg PD = zero PD run scoreboard players operation dSeg PD = dNewSeg PD\n' +\
+                'execute unless score dNewSeg PD = zero PD run scoreboard players set dNewSeg PD 0\n' +\
+                'scoreboard players operation dOldNum PD = dNum PD\n' +\
+                'scoreboard players operation dOldSeg PD = dSeg PD\n' +\
+                'scoreboard players operation dOldTim PD = dTim PD\n\n')
+        #5) dialogue switch
+        f.write('#ACTIVATE CURRENT DIALOGUE (this currently the most exact/efficient method to check hardcoded values, let\'s hope MC eventually adds a feature for this)\n')
+        for n in diaNums.keys():
+            f.write('scoreboard players remove dNum PD %d\n'%n +\
+                    'execute if score dNum PD = zero PD run function projectdialogue:dialogue%d\n'%n +\
+                    'scoreboard players operation dNum PD = dOldNum PD\n\n')
+        #6) post tick cleanup, preps trigger for user interaction
+        f.write('scoreboard players set @a[scores={dSeg=1..}] dSeg 0\n' +\
+                'scoreboard players enable @a dSeg')
 
-def makeCommandBlock(x,y,z,facing,command,type,needsRedstone,conditional,trackOutput):
-    #x y z are the coordinates where the block is placed
-    #facing = {'north','south','west','east','up','down'} is direction of the block
-    #command (string) is the command in the command block
-    #type = {'normal','repeating','chain'}
-    #needsRedstone (boolean) is whether the command block needs a redstone signal
-    #conditional (boolean) is whether the command block is in conditional mode
-    (cx, _, cz) = inChunk(x,y,z)
-    chunk = lvl.getChunk(cx,cz)
-    if type == 'normal':
-        lvl.setBlockAt(x,y,z,137)
-    elif type == 'repeating':
-        lvl.setBlockAt(x,y,z,210)
-        #add a TileTick to get the cblock running, else it will not automatically start
-        tt = TAG_Compound()
-        tt['i'] = TAG_String('minecraft:repeating_command_block')
-        tt['p'] = TAG_Int(0)
-        tt['t'] = TAG_Int(1)
-        tt['x'] = TAG_Int(x)
-        tt['y'] = TAG_Int(y)
-        tt['z'] = TAG_Int(z)
-        chunk.TileTicks.append(tt)
-    elif type == 'chain':
-        lvl.setBlockAt(x,y,z,211) 
-    lvl.setBlockDataAt(x,y,z,directionNum[facing]+8*conditional)#see bytes http://minecraft.gamepedia.com/Command_Block
-    tile_ent = TAG_Compound()
-    tile_ent['powered'] = TAG_Byte(0)
-    tile_ent['auto'] = TAG_Byte(not needsRedstone)
-    tile_ent['TrackOutput'] = TAG_Byte(trackOutput)
-    tile_ent['SuccessCount'] = TAG_Int(0)
-    tile_ent['id'] = TAG_String(command_block_id)
-    tile_ent['x'] = TAG_Int(x)
-    tile_ent['y'] = TAG_Int(y)
-    tile_ent['z'] = TAG_Int(z)
-    tile_ent['Command'] = TAG_String(command)
-    tile_ent['CustomName'] = TAG_String('@')
-    chunk.TileEntities.append(tile_ent)
-    chunk.dirty = True
+#------------- RUN ---------------#
+
+root = tk.Tk()
+root.geometry("800x800")
+root.iconbitmap("logo.ico")
+root.title("Project DIALOGUE")
+root.configure(background="gray24")
+
+def loadXMLFile():
+    xmlFile = filedialog.askopenfilename(initialdir = os.getcwd(),title = "Select Project DIALOGUE XML file",filetypes = (("xml files","*.xml"),("all files","*.*")))
+    setText(xmlFileText,xmlFile)
     
-def initWorld(x,y,z):
-    #spawn the tracker, clock and all other necessities that each world needs somewhere!
-    (cx, _, cz) = inChunk(x,y,z)
-    chunk = lvl.getChunk(cx,cz)
-    #INIT SCOREBOARD
-    #CANT ACCESS SCOREBOARD, need c-block workaround!
-    #Creates a series of command blocks that make the objectives and then self-destructs
-    makeCommandBlock(x,y,z+3,'east','scoreboard objectives add dTim dummy Dialogue Ticks', 'repeating', False, False, False)
-    makeCommandBlock(x+1,y,z+3,'east','scoreboard objectives add dNum dummy Dialogue Number', 'chain', False, False, False)
-    makeCommandBlock(x+2,y,z+3,'up','scoreboard objectives add dSeg trigger Dialogue Interactive Segment', 'chain', False, False, False)
-    makeCommandBlock(x+2,y+1,z+3,'west','scoreboard objectives add dOldNum dummy Last Dialogue Number', 'chain', False, False, False)
-    makeCommandBlock(x+1,y+1,z+3,'west','scoreboard objectives add dOldSeg dummy Last Dialogue Segment', 'chain', False, False, False)
-    makeCommandBlock(x,y+1,z+3,'up','gamerule commandBlockOutput false', 'chain', False, False, False)
-    makeCommandBlock(x,y+2,z+3,'east','gamerule sendCommandFeedback false','chain',False,False,False)
-    makeCommandBlock(x+1,y+2,z+3,'east','summon minecraft:ender_crystal ~-1 ~-1.5 ~-2 {CustomName:"Tracker",CustomNameVisible:1b,ShowBottom:0b,Invulnerable:1b,Tags:["tracker"]}','chain',False,False,False)
-    makeCommandBlock(x+2,y+2,z+3,'up','fill ~ ~ ~ ~-2 ~-2 ~ air','chain',False,False,False)#<--self-destruct
-    #SPAWN CLOCK
-    makeCommandBlock(x,y,z+1,'up','scoreboard players add @e[tag=tracker] dTim 1','repeating',False,False,False)
-    #SPAWN SCORE-UPDATE DETECTOR (SUD)
-    makeCommandBlock(x,y,z,'east','scoreboard players operation @e[tag=tracker] dOldNum -= @e[tag=tracker] dNum','repeating',False,False,False)
-    makeCommandBlock(x+1,y,z,'south','execute @e[tag=tracker,score_dOldNum_min=-999999999,score_dOldNum=-1] ~ ~ ~ scoreboard players set @e[tag=tracker] dTim -1','chain',False,False,False)
-    makeCommandBlock(x+1,y,z+1,'south','execute @e[tag=tracker,score_dOldNum_min=1,score_dOldNum=999999999] ~ ~ ~ scoreboard players set @e[tag=tracker] dTim -1','chain',False,False,False)
-    makeCommandBlock(x+1,y,z+2,'up','execute @e[tag=tracker,score_dOldNum_min=-999999999,score_dOldNum=-1] ~ ~ ~ scoreboard players set @e[tag=tracker] dSeg 0','chain',False,False,False)#reset dSeg for tracker
-    makeCommandBlock(x+1,y+1,z+2,'north','execute @e[tag=tracker,score_dOldNum_min=1,score_dOldNum=999999999] ~ ~ ~ scoreboard players set @e[tag=tracker] dSeg 0','chain',False,False,False)
-    makeCommandBlock(x+1,y+1,z+1,'north','execute @e[tag=tracker,score_dOldNum_min=1,score_dOldNum=999999999] ~ ~ ~ scoreboard players set @a dSeg 0','chain',False,False,False)#reset dSeg for players
-    makeCommandBlock(x+1,y+1,z,'west','execute @e[tag=tracker,score_dOldNum_min=1,score_dOldNum=999999999] ~ ~ ~ scoreboard players set @a dSeg 0','chain',False,False,False)
-    makeCommandBlock(x,y+1,z,'up','scoreboard players operation @e[tag=tracker] dOldNum = @e[tag=tracker] dNum','chain',False,False,False)
-    makeCommandBlock(x,y+2,z,'east','scoreboard players operation @e[tag=tracker] dOldSeg -= @e[tag=tracker] dSeg','chain',False,False,False)
-    makeCommandBlock(x+1,y+2,z,'south','execute @e[tag=tracker,score_dOldSeg_min=-999999999,score_dOldSeg=-1] ~ ~ ~ scoreboard players set @e[tag=tracker] dTim -1','chain',False,False,False)
-    makeCommandBlock(x+1,y+2,z+1,'south','execute @e[tag=tracker,score_dOldSeg_min=1,score_dOldSeg=999999999] ~ ~ ~ scoreboard players set @e[tag=tracker] dTim -1','chain',False,False,False)
-    makeCommandBlock(x+1,y+2,z+2,'up','scoreboard players operation @e[tag=tracker] dOldSeg = @e[tag=tracker] dSeg','chain',False,False,False)
-    #TRIGGER OPERATOR
-    makeCommandBlock(x,y,z+2,'up','scoreboard players enable @a dSeg','repeating',False,False,False)
-    chunk.dirty = True
-
-#------------- RUN ---------------#    
-inputs = (
-("Generate base (do once per world!)", False),
-("Compact mode",True),
-("Old minecraft world (if world is pre 1.11)",False),
-)
-
-def initGlobals(level,box,options):
-    #Initalize all the global variables. MCEdit compiles the filter once at opening the 'filter' option, so a standard initilization will only run once!
-    global minX,minY,minZ,workX,workY,workZ,maxX,maxY,maxZ,xDirection,yDirection,lvl,compactMode,maxDiaNum,command_block_id,ender_crystal_id
-    compactMode = options["Compact mode"]
-    command_block_id = "command_block"
-    ender_crystal_id = "ender_crystal"
-    if options["Old minecraft world (if world is pre 1.11)"]:
-        command_block_id = u"Control"
-        ender_crystal_id = u"EnderCrystal"
-    minX = box.minx
-    minY = box.miny
-    minZ = box.minz
-    workX = box.minx-1
-    workY = box.miny
-    workZ = box.minz-2 if not compactMode else box.minz
-    maxX = box.maxx-1#box overshoots the actual coordinates in the box by 1
-    maxY = box.maxy-1
-    maxZ = box.maxz-1
-    xDirection = 1
-    yDirection = 1
-    lvl = level
+def askTargetDir():
+    targetdir = filedialog.askdirectory(initialdir = os.getcwd(),title = "Assign a target directory")
+    setText(targetDirText,targetdir)
+    
+def setText(textwidget,newtext):
+    #replace the text in textwidget with newtext
+    textwidget.delete(1.0,tk.END)
+    textwidget.insert(tk.END,newtext)
+    
+def go():
+    global targetpath, maxDiaNum, diaNums, dialogueFile 
     maxDiaNum = 0
+    diaNums = {}
+    try:
+        targetpath = os.path.join(targetDirText.get(1.0, tk.END).rstrip('\n'),'PD')
+        filename = xmlFileText.get(1.0, tk.END).rstrip('\n')
+        initDirectories()
+        if filename != None:
+            root = xTree.parse(filename,parser=LineNumberingParser()).getroot()
+            handleTree(root)
+            dialogueFile.close()
+            constructTickFile(diaNums)
+        messagebox.showinfo("Done!","Project: DIALOGUE succesfully completed. The following numbers were assigned (you can also find these mappings in each respective dialogue file in the datapack):\n" + '\n'.join(['%d: %s'%(num,name) for (num, name) in diaNums.items()]))
+    except SimpleTerminationException as e:
+        messagebox.showerror("Error",str(e))
+    except xTree.ParseError as e:
+        messagebox.showerror("XML Error",str(e))
+    except UnknownFormattingCodeError as e:
+        messagebox.showerror("Minecraft formatting code error",str(e))
+    except Exception as e:
+        messagebox.showerror("Unknown error",str(e))
+        
+header = tk.PhotoImage(file="header.png")
+headerLabel = tk.Label(image=header, borderwidth=0)
+headerLabel.pack()
 
-def perform(level, box, options):
-    initGlobals(level,box,options)
-    if options["Generate base (do once per world!)"]:
-        initWorld(box.minx,box.miny,box.minz)
-        global workZ, compactMode
-        workZ = box.minz+2
-        if compactMode:
-            workZ += 2
-    filename = mcplatform.askOpenFile(title="Select an XML file", schematics=False, suffixes=['xml'])
-    if filename != None:
-        root = getTree(filename)
-        handleTree(root)
+hline1=tk.Frame(root,height=4,width=50,bg="black", borderwidth=8, relief="groove")
+hline1.pack(fill=tk.X)
+
+fontButtons = ("fixedsys", 24)
+fontTexts   = ("fixedsys", 18)
+
+xmlFileButton = tk.Button(root, text="Browse XML file", command = loadXMLFile, borderwidth=4, bg="gray25", fg="gainsboro", font=fontButtons)
+xmlFileText = tk.Text(root, bg="gray35", fg="gainsboro", borderwidth=8, relief="groove", font=fontTexts, height=3, padx=20, wrap=tk.CHAR)
+setText(xmlFileText, "")
+xmlFileButton.pack(pady=10)
+xmlFileText.pack(pady=10,padx=10)
+
+hline2=tk.Frame(root,height=4,width=50,bg="black", borderwidth=8, relief="groove")
+hline2.pack(fill=tk.X)
+
+targetDirButton = tk.Button(root, text="Assign a target directory", command = askTargetDir, borderwidth=4, bg="gray25", fg="gainsboro", font=fontButtons)
+targetDirText = tk.Text(root, bg="gray35", fg="gainsboro", borderwidth=8, relief="groove", font=fontTexts, height=3, wrap=tk.CHAR)
+setText(targetDirText, os.getcwd())
+targetDirButton.pack(pady=10)
+targetDirText.pack(pady=10,padx=10)
+
+hline3=tk.Frame(root,height=4,width=50,bg="black", borderwidth=8, relief="groove")
+hline3.pack(fill=tk.X)
+
+goButton = tk.Button(root, text="GO!", command = go, bg="gray25", fg="gainsboro", borderwidth=8, font=("fixedsys", 30,"bold"))
+goButton.pack(pady=20)
+
+root.mainloop()
