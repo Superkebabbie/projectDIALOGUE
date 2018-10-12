@@ -8,11 +8,14 @@ The project started as a filter for [MCEdit](https://www.mcedit-unified.net/), b
 
 Project: DIALOGUE uses XML files to define the trees, using a syntax developed purely for this purpose. These files can be loaded into your Minecraft worlds using the application (or MCEdit filter) and ultimately produces dialogues that you can activate using one central variable. This dialogue consists out of a automatically timed sequence of tellraw messages, commands and choice points, as defined by the XML file. A detailed explanation of the entire process can be found on [this page](https://github.com/Superkebabbie/projectDIALOGUE/wiki/The-Basics) of the wiki.
 
+
 ## Links
 * [Wiki](https://github.com/Superkebabbie/projectDIALOGUE/wiki): detailed documentation of the dialogue syntax and guides on getting started and troubleshooting.
 * [Releases](https://github.com/Superkebabbie/projectDIALOGUE/releases): download links!
 * [YouTube](https://www.youtube.com/channel/UCzQBwCtRHjYcLKBMd0ADXUg): developer YouTube channel where we play some games if you want to get to know us. Tutorial videos will also be placed here.
 * [Twitch](https://www.twitch.tv/conglomerationbroadcast): Our twitch channel where we occassionally stream. Feel free to hop in with questions if you have them!
+*[Issue Tracker](https://github.com/Superkebabbie/projectDIALOGUE/issues): have you found a problem? Report it here! Always consult the wiki first and do a thorough check for mistakes of your own design.
+
 
 ## Goals for future versions
 * Defining some sort of loop environment that allows you to come back to a certain point. (Note that this is possible with some command workaround: `<command scoreboard players set dNewSeg PD N`).
